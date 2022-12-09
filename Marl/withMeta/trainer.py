@@ -46,6 +46,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             agent_action_space: Discrete,
             num_agents: int,
             env: GymEnv,
+            k: int = 25,
             learning_rate: Union[float, Schedule] = 1e-4,
             n_steps: int = 1000,
             batch_size: int = 6000,
@@ -99,6 +100,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
         self.n_envs = env.num_envs // (num_agents + 1)
         self.agents_observation_space = agent_observation_space
         self.agents_action_space = agent_action_space
+        self.k = k
 
         self.meta_observation_space = env.observation_space
         self.meta_action_space = env.action_space
@@ -140,7 +142,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             policy=policy,
             env=meta_dummy_env,
             learning_rate=learning_rate,
-            n_steps=n_steps,
+            n_steps=n_steps//self.k,
             batch_size=batch_size,
             n_epochs=n_epochs,
             gamma=gamma,
@@ -211,7 +213,6 @@ class TrainerWithMeta(OnPolicyAlgorithm):
         dones = None
         n_steps = 0
         callback.on_rollout_start()
-
         while n_steps < n_rollout_steps:
             actions, clipped_actions, values, log_probs, rewards, observations, dones, infos = self.get_new_buffers()
             if self.use_sde and self.sde_sample_freq > 0 and n_steps % self.sde_sample_freq == 0:
@@ -239,7 +240,8 @@ class TrainerWithMeta(OnPolicyAlgorithm):
                     values[agent_id] = values_
                     log_probs[agent_id] = log_probs_
                     clipped_actions[agent_id] = clip_action(actions_, self.action_space)
-
+            if (n_steps % self.k) == 0 and n_steps > 0:
+                clipped_actions[-1] = np.zeros(self.n_envs).astype(int)
             all_clipped_actions = np.vstack(clipped_actions).transpose().reshape(-1)
             new_obs, rewards_, dones_, infos_ = env.step(all_clipped_actions)
 
@@ -255,10 +257,11 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             if callback.on_step() is False:
                 return False
             [self._update_info_buffer(infos[agent_id]) for agent_id, agent in (self.agents | self.meta).items()]
-            n_steps += 1
 
             # store transitions in agents buffers
             for agent_id, agent in (self.agents | self.meta).items():
+                if agent_id == self.num_agents and (n_steps % self.k) != 0:
+                    continue
                 agent.rollout_buffer.add(
                     observations[agent_id],
                     actions[agent_id],
@@ -266,6 +269,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
                     self._last_episode_starts[agent_id],
                     values[agent_id],
                     log_probs[agent_id])
+            n_steps += 1
             self._last_obs = new_obs
             self._last_episode_starts = dones
         # Compute value for the last timestep

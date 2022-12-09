@@ -96,7 +96,7 @@ MAP = {"small": SMALL_HARVEST_MAP,
 class MetaHarvestCommonsEnv(MapEnv):
 
     def __init__(self, ascii_map=HARVEST_MAP, num_agents=1, harvest_view_size=HARVEST_DEFAULT_VIEW_SIZE,
-                 color_map=None, ep_length=1000):
+                 color_map=None, ep_length=1000, k=25):
         if color_map is None:
             color_map = DEFAULT_COLORMAP
         self.apple_points = []
@@ -115,6 +115,7 @@ class MetaHarvestCommonsEnv(MapEnv):
         self.meta_history = {"spawn_prob": [], "timeout_time": []}
         self.rewards_record = {}
         self.timeout_record = {}
+        self.k = k
         self.metrics = {"efficiency": [],
                         "equality": [],
                         "sustainability": [],
@@ -170,13 +171,16 @@ class MetaHarvestCommonsEnv(MapEnv):
     def meta_action(self, action):
         self.spawn_prob *= META_ACTION[action]
         np.clip(self.spawn_prob, 0, 1, out=self.spawn_prob)
-        self.meta_history["spawn_prob"].append(META_ACTION[action])
+        self.meta_history["spawn_prob"].append(np.mean(self.spawn_prob))
+
+    def meta_observation(self):
+        return pad(np.expand_dims([self.spawn_prob], 2), self.base_map.shape)
 
     def reset(self):
         observations = super().reset()
         for agent_id, obs in observations.items():
             observations[agent_id]["curr_obs"] = pad(observations[agent_id]["curr_obs"], self.base_map.shape)
-        observations["meta"] = {"curr_obs": rgb2gray(self.map_to_colors(self.get_map_with_agents(), self.color_map))}
+        observations["meta"] = {"curr_obs": self.meta_observation()}
         return observations
 
     def step(self, actions):
@@ -186,8 +190,8 @@ class MetaHarvestCommonsEnv(MapEnv):
         self.update_social_metrics(nRewards)
         for agent_id, obs in nObservations.items():
             nObservations[agent_id]["curr_obs"] = pad(nObservations[agent_id]["curr_obs"], self.base_map.shape)
-        nObservations["meta"] = {"curr_obs": rgb2gray(self.map_to_colors(self.world_map, self.color_map))}
-        nRewards["meta"] = sum(nRewards.values())
+        nObservations["meta"] = {"curr_obs": self.meta_observation()}
+        nRewards["meta"] = self.compute_efficiency(self.k) * self.compute_peace(self.k)
         nDone["meta"] = False
         nInfo["meta"] = {}
         return nObservations, nRewards, nDone, nInfo
@@ -299,37 +303,10 @@ class MetaHarvestCommonsEnv(MapEnv):
             return None
 
         # Compute sum of rewards
-        sum_of_rewards = dict(zip(self.agents.keys(), [0] * self.num_agents))
-        for agent_id, rewards in self.rewards_record.items():
-            sum_of_rewards[agent_id] = np.sum(rewards)
-
-        agents_sum_rewards = np.sum(list(sum_of_rewards.values()))
-
-        # Compute efficiency/sustainability
-        efficiency = agents_sum_rewards / self.num_agents
-
-        # Compute Equality (Gini Coefficient)
-        sum_of_diff = 0
-        for agent_id_a, rewards_sum_a in sum_of_rewards.items():
-            for agent_id_b, rewards_sum_b in sum_of_rewards.items():
-                sum_of_diff += np.abs(rewards_sum_a - rewards_sum_b)
-
-        equality = 1 - sum_of_diff / (2 * self.num_agents * agents_sum_rewards)
-
-        # Compute sustainability metric (Average time of at which rewards were collected)
-        avg_time = 0
-        for agent_id, rewards in self.rewards_record.items():
-            pos_reward_time_steps = np.argwhere(np.array(rewards) > 0)
-            if pos_reward_time_steps.size != 0:
-                avg_time += np.mean(pos_reward_time_steps)
-
-        sustainability = avg_time / (self.num_agents * self.ep_length)
-
-        # Compute peace metric
-        timeout_steps = 0
-        for agent_id, peace_record in self.timeout_record.items():
-            timeout_steps += np.sum(peace_record)
-        peace = (self.num_agents * self.ep_length - timeout_steps) / (self.num_agents * self.ep_length)
+        efficiency = self.compute_efficiency(0)
+        equality = self.compute_equality()
+        sustainability = self.compute_sustainability()
+        peace = self.compute_peace(0)
 
         self.metrics["efficiency"].append(efficiency)
         self.metrics["equality"].append(equality)
@@ -338,6 +315,48 @@ class MetaHarvestCommonsEnv(MapEnv):
         self.metrics |= self.meta_history
         self.timeout_record = {}
         self.rewards_record = {}
+
+    def compute_efficiency(self, k):
+        sum_of_rewards = dict(zip(self.agents.keys(), [0] * self.num_agents))
+        for agent_id, rewards in self.rewards_record.items():
+            sum_of_rewards[agent_id] = np.sum(rewards[-k:])
+
+        agents_sum_rewards = np.sum(list(sum_of_rewards.values()))
+        efficiency = agents_sum_rewards / self.num_agents
+        if k != 0:
+            efficiency /= k
+        return efficiency
+
+    def compute_peace(self, k):
+        timeout_steps = 0
+        for agent_id, peace_record in self.timeout_record.items():
+            timeout_steps += np.sum(peace_record[-k:])
+        peace = (self.num_agents * self.ep_length - timeout_steps) / (self.num_agents * self.ep_length)
+        return peace
+
+    def compute_sustainability(self):
+        avg_time = 0
+        for agent_id, rewards in self.rewards_record.items():
+            pos_reward_time_steps = np.argwhere(np.array(rewards) > 0)
+            if pos_reward_time_steps.size != 0:
+                avg_time += np.mean(pos_reward_time_steps)
+
+        sustainability = avg_time / (self.num_agents * self.ep_length)
+        return sustainability
+
+    def compute_equality(self):
+        sum_of_rewards = dict(zip(self.agents.keys(), [0] * self.num_agents))
+        for agent_id, rewards in self.rewards_record.items():
+            sum_of_rewards[agent_id] = np.sum(rewards)
+
+        agents_sum_rewards = np.sum(list(sum_of_rewards.values()))
+        sum_of_diff = 0
+        for agent_id_a, rewards_sum_a in sum_of_rewards.items():
+            for agent_id_b, rewards_sum_b in sum_of_rewards.items():
+                sum_of_diff += np.abs(rewards_sum_a - rewards_sum_b)
+
+        equality = 1 - sum_of_diff / (2 * self.num_agents * agents_sum_rewards)
+        return equality
 
     def get_social_metrics(self):
         metrics = {key: np.mean(value) for key, value in self.metrics.items()}

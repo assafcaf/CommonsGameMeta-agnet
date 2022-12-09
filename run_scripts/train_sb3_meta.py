@@ -81,6 +81,13 @@ def parse_args():
         default=0.05,
         help="Disadvantageous inequity aversion factor",
     )
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=25,
+        help="Meta agent sampling rate ",
+    )
+
     args = parser.parse_args()
     return args
 
@@ -98,9 +105,10 @@ def main(args):
     inequity_averse_reward = args.inequity_averse_reward
     alpha = args.alpha
     beta = args.beta
+    k = args.k
 
     # Training
-    num_cpus = 1  # number of cpus
+    num_cpus = 8  # number of cpus
     num_envs = 8  # number of parallel multi-agent environments
     num_frames = 8  # number of frames to stack together; use >4 to avoid automatic VecTransposeImage
     features_dim = (
@@ -129,8 +137,8 @@ def main(args):
         env=env_name,
         num_agents=num_agents,
         harvest_view_size=visual_radius,
-        map_env=map
-        )
+        map_env=map,
+        k=k)
     # add wrappers to env
     env = ss.observation_lambda_v0(env, lambda x, _: x["curr_obs"], lambda s: s["curr_obs"])
     env = ss.frame_stack_v1(env, num_frames)
@@ -163,7 +171,7 @@ def main(args):
         # policy_kwargs=policy_kwargs,
         tensorboard_log=tensorboard_log,
         verbose=3,
-    )
+        k=args.k)
 
     # train model
     custom_callback = IndependentAgentCallback(eval_env=eval_env, freq=log_every)

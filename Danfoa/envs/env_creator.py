@@ -7,9 +7,10 @@ from Danfoa.maps import *
 def get_env_creator(
     env,
     num_agents,
+    k,
     harvest_view_size=7,
     map_env=HARVEST_MAP,
-    ep_length=1000
+    ep_length=1000,
 ):
     if env == "Harvest":
 
@@ -26,9 +27,10 @@ def get_env_creator(
                 num_agents=num_agents,
                 harvest_view_size=harvest_view_size,
                 ascii_map=map_env,
-                ep_length=ep_length
+                ep_length=ep_length,
+                k=k
             )
     else:
-        raise ValueError(f"env must be one of harvest, cleanup, switch, not {env}")
+        raise ValueError(f"env must be one of Harvest or HarvestMeta, not {env}")
 
     return env_creator

@@ -11,9 +11,10 @@ def rgb2gray(rgb):
     return np.expand_dims(gray, -1)
 
 
-def pad(a, final_shape):
+def pad(a, final_shape, ):
+    m, n, _ = a.shape
     a_ = np.zeros(final_shape + (1,))
-    a_[0: 9, 0: 9] = a
+    a_[0: m, 0: n] = a
     return a_
 
 

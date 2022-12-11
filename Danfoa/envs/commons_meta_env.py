@@ -33,8 +33,8 @@ TIMEOUT_TIME = 25
 #                11:2,     # increase timeout duration
 #                12:5}     # increase timeout duration
 META_ACTION = {0: 1,     # no-op
-               1: 0.975,  # decrease spawn prop
-               2: 1.025,   # increase spawn prop
+               1: 1.25,  # decrease spawn prop
+               2: 0.75,   # increase spawn prop
 }     # increase timeout duration
 
 OUTCAST_POSITION = -99
@@ -116,6 +116,7 @@ class MetaHarvestCommonsEnv(MapEnv):
         self.rewards_record = {}
         self.timeout_record = {}
         self.k = k
+        self.t = 0
         self.metrics = {"efficiency": [],
                         "equality": [],
                         "sustainability": [],
@@ -132,7 +133,7 @@ class MetaHarvestCommonsEnv(MapEnv):
                 low=0,
                 high=255,
                 shape=self.base_map.shape + (1,),
-                dtype=np.uint8)}
+                dtype=np.float)}
 
         # for when the actions of other agents are part of agents observations space
         if self.return_agent_actions:
@@ -177,6 +178,7 @@ class MetaHarvestCommonsEnv(MapEnv):
         return pad(np.expand_dims([self.spawn_prob], 2), self.base_map.shape)
 
     def reset(self):
+        self.t = 0
         observations = super().reset()
         for agent_id, obs in observations.items():
             observations[agent_id]["curr_obs"] = pad(observations[agent_id]["curr_obs"], self.base_map.shape)
@@ -184,6 +186,7 @@ class MetaHarvestCommonsEnv(MapEnv):
         return observations
 
     def step(self, actions):
+        self.t += 1
         self.meta_action(action=actions["meta"])
         actions_ = {key: val for key,val in actions.items() if key != 'meta'}
         nObservations, nRewards, nDone, nInfo = super().step(actions_)
@@ -191,7 +194,7 @@ class MetaHarvestCommonsEnv(MapEnv):
         for agent_id, obs in nObservations.items():
             nObservations[agent_id]["curr_obs"] = pad(nObservations[agent_id]["curr_obs"], self.base_map.shape)
         nObservations["meta"] = {"curr_obs": self.meta_observation()}
-        nRewards["meta"] = self.compute_efficiency(self.k) * self.compute_peace(self.k)
+        nRewards["meta"] = self.compute_efficiency(0, True) * self.compute_peace(0)
         nDone["meta"] = False
         nInfo["meta"] = {}
         return nObservations, nRewards, nDone, nInfo
@@ -316,15 +319,15 @@ class MetaHarvestCommonsEnv(MapEnv):
         self.timeout_record = {}
         self.rewards_record = {}
 
-    def compute_efficiency(self, k):
+    def compute_efficiency(self, k, div=False):
         sum_of_rewards = dict(zip(self.agents.keys(), [0] * self.num_agents))
         for agent_id, rewards in self.rewards_record.items():
             sum_of_rewards[agent_id] = np.sum(rewards[-k:])
 
         agents_sum_rewards = np.sum(list(sum_of_rewards.values()))
         efficiency = agents_sum_rewards / self.num_agents
-        if k != 0:
-            efficiency /= k
+        if div:
+            efficiency /= self.t
         return efficiency
 
     def compute_peace(self, k):

@@ -102,6 +102,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
         self.agents_action_space = agent_action_space
         self.k = k
 
+        # self.meta_observation_space = gym.spaces.Box( low=0, high=1, shape=(1, 4), dtype=float)
         self.meta_observation_space = env.observation_space
         self.meta_action_space = env.action_space
 
@@ -224,12 +225,15 @@ class TrainerWithMeta(OnPolicyAlgorithm):
                 # Convert to pytorch tensor or to TensorDict
                 for agent_id, agent in (self.agents | self.meta).items():
                     # checks rather current agent is meta or regular
-                    if (agent_id+1) % (self.num_agents+1):
+                    if (agent_id+1) % (self.num_agents+1):   # low-level agent
                         _obs = correct_observation_indexing(self._last_obs, self.num_agents+1, agent_id, self.n_envs,
                                                             self.agents_observation_space.shape).transpose(0, -1, 1, 2)
-                    else:
+                    else:  # meta agent
                         _obs = correct_observation_indexing(self._last_obs, self.num_agents+1, agent_id, self.n_envs,
-                                                            self.meta_observation_space.shape).transpose(0, -1, 1, 2)
+                                                            self.meta_observation_space.shape).transpose(0, 1, 2, -1)
+                        # indices = [i for i in range(1, self.n_envs*(self.num_agents+1))
+                        #            if (i+1) % (self.num_agents+1) == 0]
+                        # _obs = self._last_obs[indices][:, 0, :4][:, :, -1]
 
                     observations[agent_id] = _obs
                     obs_tensor = obs_as_tensor(_obs, agent.policy.device)
@@ -240,7 +244,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
                     values[agent_id] = values_
                     log_probs[agent_id] = log_probs_
                     clipped_actions[agent_id] = clip_action(actions_, self.action_space)
-            if (n_steps % self.k) == 0 and n_steps > 0:
+            if (n_steps % self.k) != 0:
                 clipped_actions[-1] = np.zeros(self.n_envs).astype(int)
             all_clipped_actions = np.vstack(clipped_actions).transpose().reshape(-1)
             new_obs, rewards_, dones_, infos_ = env.step(all_clipped_actions)
@@ -281,7 +285,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
                 else:
 
                     _obs = correct_observation_indexing(self._last_obs, self.num_agents + 1, agent_id, self.n_envs,
-                                                        self.meta_observation_space.shape).transpose(0, -1, 1, 2)
+                                                        self.meta_observation_space.shape).transpose(0, 1, 2, -1)
                 obs_tensor = obs_as_tensor(_obs, agent.policy.device)
 
                 # Compute value for the last timestep

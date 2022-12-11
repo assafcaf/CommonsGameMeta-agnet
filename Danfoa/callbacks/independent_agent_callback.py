@@ -32,7 +32,10 @@ class IndependentAgentCallback(BaseCallback):
                   "ent_coef": self.model.ent_coef,
                   "n_frames": self.model.env.observation_space.shape[-1],
                   "policy_type": str(type(self.model.agents[0].policy.features_extractor)).split(".")[-1],
-                  "observations_space": str(self.model.observation_space)}
+                  "observations_space": str(self.model.observation_space),
+                  "k": self.model.k,
+                  "actions": str(self.eval_env.venv.venv.vec_envs[0].par_env.env.aec_env.env.env.env.ssd_env.spawn_prob)
+                  }
 
         json_object = json.dumps(params, indent=4)
         with open(file_name, "w") as outfile:

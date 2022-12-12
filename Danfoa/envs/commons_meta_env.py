@@ -17,7 +17,15 @@ ACTIONS['FIRE'] = 5  # length of firing range
 
 # SPAWN_PROB = [0, 0.005, 0.02, 0.05]
 
-SPAWN_PROB = np.array([0, 0.01, 0.05,  0.1])
+SPAWN_PROB = {0: np.array([0, 0.0025, 0.005, 0.025]),
+              1: np.array([0, 0.005, 0.01, 0.05]),
+              2: np.array([0, 0.01, 0.05, 0.1]),
+              3: np.array([0, 0.02, 0.075, 0.125]),
+              4: np.array([0, 0.05, 0.1, 0.15]),
+              5: np.array([0, 0.075, 0.15, 0.2]),
+              6: np.array([0, 0.1, 0.15, 0.25]),
+              7: np.array([0, 0.15, 0.25, 0.35]),
+              }
 TIMEOUT_TIME = 25
 # META_ACTION = {0: 0,     # no-op
 #                1:0.99,  # decrease spawn prop
@@ -32,9 +40,13 @@ TIMEOUT_TIME = 25
 #                10:1,     # increase timeout duration
 #                11:2,     # increase timeout duration
 #                12:5}     # increase timeout duration
-META_ACTION = {0: 1,     # no-op
-               1: 1.25,  # decrease spawn prop
-               2: 0.75,   # increase spawn prop
+META_ACTION = {0: 0,     # no-op
+               1: 1,  # decrease spawn prop
+               2: 3,
+               4: 4,
+               5: 5,
+               6: 6,
+               7: 7# increase spawn prop
 }     # increase timeout duration
 
 OUTCAST_POSITION = -99
@@ -110,7 +122,7 @@ class MetaHarvestCommonsEnv(MapEnv):
             for col in range(self.base_map.shape[1]):
                 if self.base_map[row, col] == 'A':
                     self.apple_points.append([row, col])
-        self.spawn_prob = copy.copy(SPAWN_PROB)
+        self.spawn_prob = SPAWN_PROB[2]
         self.timeout_time = copy.copy(TIMEOUT_TIME)
         self.meta_history = {"spawn_prob": [], "timeout_time": []}
         self.rewards_record = {}
@@ -124,7 +136,7 @@ class MetaHarvestCommonsEnv(MapEnv):
 
     @property
     def action_space(self):
-        return gym.spaces.Discrete(len(META_ACTION))
+        return gym.spaces.Discrete(len(META_ACTION.keys()))
 
     @property
     def observation_space(self):
@@ -170,8 +182,8 @@ class MetaHarvestCommonsEnv(MapEnv):
         return {"spawn_prob": self.spawn_prob, "timeout_time": self.timeout_time}
 
     def meta_action(self, action):
-        self.spawn_prob *= META_ACTION[action]
-        np.clip(self.spawn_prob, 0, 1, out=self.spawn_prob)
+        if action != -1:
+            self.spawn_prob = SPAWN_PROB[action]
         self.meta_history["spawn_prob"].append(np.mean(self.spawn_prob))
 
     def meta_observation(self):
@@ -213,7 +225,7 @@ class MetaHarvestCommonsEnv(MapEnv):
 
     def custom_reset(self):
         """Initialize the walls and the apples"""
-        self.spawn_prob = copy.copy(SPAWN_PROB)
+        self.spawn_prob = SPAWN_PROB[2]
         self.timeout_time = copy.copy(TIMEOUT_TIME)
         self.meta_history = {"spawn_prob": [], "timeout_time": []}
         for apple_point in self.apple_points:
@@ -274,7 +286,7 @@ class MetaHarvestCommonsEnv(MapEnv):
                                 if symbol == 'A':
                                     num_apples += 1
 
-                spawn_prob = SPAWN_PROB[min(num_apples, 3)]
+                spawn_prob = self.spawn_prob[min(num_apples, 3)]
                 rand_num = np.random.rand(1)[0]
                 if rand_num < spawn_prob:
                     new_apple_points.append((row, col, 'A'))

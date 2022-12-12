@@ -245,7 +245,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
                     log_probs[agent_id] = log_probs_
                     clipped_actions[agent_id] = clip_action(actions_, self.action_space)
             if (n_steps % self.k) != 0:
-                clipped_actions[-1] = np.zeros(self.n_envs).astype(int)
+                clipped_actions[-1] = np.zeros(self.n_envs).astype(int)-1
             all_clipped_actions = np.vstack(clipped_actions).transpose().reshape(-1)
             new_obs, rewards_, dones_, infos_ = env.step(all_clipped_actions)
 

@@ -187,7 +187,7 @@ class MetaHarvestCommonsEnv(MapEnv):
         self.meta_history["spawn_prob"].append(np.mean(self.spawn_prob))
 
     def meta_observation(self):
-        return pad(np.expand_dims([self.spawn_prob], 2), self.base_map.shape)
+        return rgb2gray(self.map_to_colors(self.get_map_with_agents(), self.color_map))
 
     def reset(self):
         self.t = 0

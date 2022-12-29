@@ -7,7 +7,7 @@ from Danfoa.maps import *
 def get_env_creator(
     env,
     num_agents,
-    k,
+    k=25,
     harvest_view_size=7,
     map_env=HARVEST_MAP,
     ep_length=1000,

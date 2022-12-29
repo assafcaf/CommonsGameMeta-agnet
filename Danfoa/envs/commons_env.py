@@ -1,3 +1,4 @@
+import gym
 import numpy as np
 
 # from social_dilemmas.envs
@@ -17,27 +18,6 @@ SPAWN_PROB = [0, 0.01, 0.05,  0.1]
 OUTCAST_POSITION = -99
 
 AGENT_COLOR = [181, 4, 10]  #
-# DEFAULT_COLORMAP = {' ': [0, 0, 0],  # Black background
-#                     '0': [0, 0, 0],  # Black background beyond map walls
-#                     '': [180, 180, 180],  # Grey board walls
-#                     '@': [180, 180, 180],  # Grey board walls
-#                     'A': [0, 255, 0],  # Green apples
-#                     'F': [255, 255, 0],  # Yellow fining beam
-#                     'P': [159, 67, 255],  # Purple player
-#
-#                     # Colours for agents. R value is a unique identifier
-#                     '1': AGENT_COLOR,
-#                     '2': AGENT_COLOR,
-#                     '3': AGENT_COLOR,
-#                     '4': AGENT_COLOR,
-#                     '5': AGENT_COLOR,
-#                     '6': AGENT_COLOR,
-#                     '7': AGENT_COLOR,
-#                     '8': AGENT_COLOR,
-#                     '9': AGENT_COLOR,
-#                     '10': AGENT_COLOR,
-#                     }
-
 DEFAULT_COLORMAP = {' ': [0, 0, 0],  # Black background
                    '0': [0, 0, 0],  # Black background beyond map walls
                    '': [180, 180, 180],  # Grey board walls

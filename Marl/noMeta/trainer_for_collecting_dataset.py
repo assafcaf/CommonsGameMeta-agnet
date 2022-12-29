@@ -1,10 +1,11 @@
 from typing import Any, Dict, List, Optional, Type, Union, Tuple
 import gym
-from gym.spaces import MultiDiscrete
 from .utils import *
 import torch as th
 from gym.core import ActType, ObsType, RenderFrame
 from stable_baselines3 import PPO
+from Utils.dataset_buffer import DataSetBuffer
+from Utils.trainer_utils import correct_observation_indexing
 from stable_baselines3.common.type_aliases import GymEnv, MaybeCallback, Schedule
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.utils import obs_as_tensor
@@ -31,7 +32,7 @@ class DummyGymEnv(gym.Env):
         pass
 
 
-class TrainerWithMeta(OnPolicyAlgorithm):
+class TrainderForCollectingDataset(OnPolicyAlgorithm):
     policy_aliases: Dict[str, Type[BasePolicy]] = {
         "MlpPolicy": ActorCriticPolicy,
         "CnnPolicy": ActorCriticCnnPolicy,
@@ -41,11 +42,8 @@ class TrainerWithMeta(OnPolicyAlgorithm):
     def __init__(
             self,
             policy: Union[str, Type[ActorCriticPolicy]],
-            agent_observation_space: Box,
-            agent_action_space: Discrete,
             num_agents: int,
             env: GymEnv,
-            k: int = 25,
             learning_rate: Union[float, Schedule] = 1e-4,
             n_steps: int = 1000,
             batch_size: int = 6000,
@@ -65,7 +63,12 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             verbose: int = 0,
             seed: Optional[int] = None,
             create_eval_env: bool = False,
+            max_len: int = int(1e6),
+            agent_observation_space: Box = None,
+            agent_action_space: Box = None,
+            dataset_name: str = "",
             device: Union[th.device, str] = "auto"):
+
         super().__init__(
             policy,
             env,
@@ -96,29 +99,23 @@ class TrainerWithMeta(OnPolicyAlgorithm):
         # init params
         self.env = env
         self.num_agents = num_agents
-        self.n_envs = env.num_envs // (num_agents + 1)
+        self.n_envs = env.num_envs // (num_agents+1)
         self.agents_observation_space = agent_observation_space
-        self.k = k
-
-        # self.meta_observation_space = gym.spaces.Box( low=0, high=1, shape=(1, 4), dtype=float)
-        self.meta_observation_space = env.observation_space
-        self.meta_action_space = env.action_space
-        # self.meta_action_space = MultiDiscrete([5, 5])
-
         self.n_steps = n_steps
         self.tensorboard_log = tensorboard_log
         self.verbose = verbose
         self._logger = None
 
-        agents_env_fn = lambda: DummyGymEnv(self.agents_observation_space, agent_action_space)
-        agents_dummy_env = DummyVecEnv([agents_env_fn] * self.n_envs)
+        self.meta_observation_space = env.observation_space
+        self.dataset_buffer = DataSetBuffer(observation_space=env.observation_space, buffer_size=max_len,
+                                            n_agents=self.num_agents, file_name=dataset_name)
 
-        meta_env_fn = lambda: DummyGymEnv(self.meta_observation_space, self.meta_action_space)
-        meta_dummy_env = DummyVecEnv([meta_env_fn] * self.n_envs)
+        env_fn = lambda: DummyGymEnv(self.agents_observation_space, agent_action_space)
+        dummy_env = DummyVecEnv([env_fn] * self.n_envs)
 
         self.agents = {i: PPO(
             policy=policy,
-            env=agents_dummy_env,
+            env=dummy_env,
             learning_rate=learning_rate,
             n_steps=n_steps,
             batch_size=batch_size,
@@ -137,32 +134,10 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             verbose=0,
             device=device)
             for i in range(self.num_agents)}
-
-        self.meta = {len(self.agents): PPO(
-            policy=policy,
-            env=meta_dummy_env,
-            learning_rate=learning_rate,
-            n_steps=n_steps//self.k,
-            batch_size=batch_size,
-            n_epochs=n_epochs,
-            gamma=gamma,
-            gae_lambda=gae_lambda,
-            clip_range=clip_range,
-            clip_range_vf=clip_range_vf,
-            ent_coef=ent_coef,
-            vf_coef=vf_coef,
-            max_grad_norm=max_grad_norm,
-            target_kl=target_kl,
-            use_sde=use_sde,
-            sde_sample_freq=sde_sample_freq,
-            policy_kwargs=policy_kwargs,
-            verbose=0,
-            device=device)}
-
         self.configure_loggers()
 
     def configure_loggers(self):
-        for agent_id, agent in (self.agents | self.meta).items():
+        for agent_id, agent in self.agents.items():
             agent._logger = configure_logger(0, None, "", True)
 
     def get_new_buffers(self):
@@ -203,7 +178,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
         assert self._last_obs is not None, "No previous observation was provided"
 
         # config agents to collect rollouts mode
-        for agent_id, agent in (self.agents | self.meta).items():
+        for agent_id, agent in self.agents.items():
             agent.policy.set_training_mode(False)
             agent.rollout_buffer.reset()
 
@@ -222,15 +197,10 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             # predict actions by the agents
             with th.no_grad():
                 # Convert to pytorch tensor or to TensorDict
-                for agent_id, agent in (self.agents | self.meta).items():
+                for agent_id, agent in self.agents.items():
                     # checks rather current agent is meta or regular
-                    if (agent_id+1) % (self.num_agents+1):   # low-level agent
-                        _obs = correct_observation_indexing(self._last_obs, self.num_agents+1, agent_id, self.n_envs,
-                                                            self.agents_observation_space.shape).transpose(0, -1, 1, 2)
-                    else:  # meta agent
-                        _obs = correct_observation_indexing(self._last_obs, self.num_agents+1, agent_id, self.n_envs,
-                                                            self.meta_observation_space.shape).transpose(0, 1, 2, -1)
-
+                    _obs = correct_observation_indexing(self._last_obs, self.num_agents+1, agent_id, self.n_envs,
+                                                        self.agents_observation_space.shape).transpose(0, -1, 1, 2)
                     observations[agent_id] = _obs
                     obs_tensor = obs_as_tensor(_obs, agent.policy.device)
 
@@ -240,13 +210,13 @@ class TrainerWithMeta(OnPolicyAlgorithm):
                     values[agent_id] = values_
                     log_probs[agent_id] = log_probs_
                     clipped_actions[agent_id] = clip_action(actions_, self.action_space)
-            if (n_steps % self.k) != 0:
-                clipped_actions[-1] = np.zeros(self.n_envs).astype(int)-1
+
+            clipped_actions[-1] = np.zeros(self.n_envs).astype(int)-1
             all_clipped_actions = np.vstack(clipped_actions).transpose().reshape(-1)
             new_obs, rewards_, dones_, infos_ = env.step(all_clipped_actions)
 
             # reshape rewards/done/info to fit the indexing convention
-            for agent_id, agent in (self.agents | self.meta).items():
+            for agent_id, agent in self.agents.items():
                 rewards[agent_id] = correct_indexing(rewards_, self.num_agents+1, agent_id, self.n_envs)
                 dones[agent_id] = correct_indexing(dones_, self.num_agents+1, agent_id, self.n_envs)
                 infos[agent_id] = correct_indexing(infos_, self.num_agents+1, agent_id, self.n_envs)
@@ -256,12 +226,10 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             callback.update_locals(locals())
             if callback.on_step() is False:
                 return False
-            [self._update_info_buffer(infos[agent_id]) for agent_id, agent in (self.agents | self.meta).items()]
+            [self._update_info_buffer(infos[agent_id]) for agent_id, agent in self.agents.items()]
 
             # store transitions in agents buffers
-            for agent_id, agent in (self.agents | self.meta).items():
-                if agent_id == self.num_agents and (n_steps % self.k) != 0:
-                    continue
+            for agent_id, agent in self.agents.items():
                 agent.rollout_buffer.add(
                     observations[agent_id],
                     actions[agent_id],
@@ -269,12 +237,18 @@ class TrainerWithMeta(OnPolicyAlgorithm):
                     self._last_episode_starts[agent_id],
                     values[agent_id],
                     log_probs[agent_id])
+
+            meta_observations = correct_observation_indexing(new_obs, self.num_agents + 1, self.num_agents,
+                                                             self.n_envs,
+                                                             self.meta_observation_space.shape).transpose(0, 1, 2, -1)
+            self.dataset_buffer.append(meta_observations, np.array(rewards[:-1]).T)
+
             n_steps += 1
             self._last_obs = new_obs
             self._last_episode_starts = dones
         # Compute value for the last timestep
         with th.no_grad():
-            for agent_id, agent in (self.agents | self.meta).items():
+            for agent_id, agent in self.agents.items():
                 if (agent_id+1) % (self.num_agents+1) != 0:
                     _obs = correct_observation_indexing(self._last_obs, self.num_agents + 1, agent_id, self.n_envs,
                                                         self.agents_observation_space.shape).transpose(0, -1, 1, 2)
@@ -296,7 +270,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
         Update agents policies using the currently gathered rollout buffer.
        """
         episode_logg = []
-        for agent_id, agent in (self.agents | self.meta).items():
+        for agent_id, agent in self.agents.items():
         # for agent_id, agent in self.agents.items():
             agent.train()
             episode_logg.append(agent._logger.name_to_value)
@@ -305,26 +279,25 @@ class TrainerWithMeta(OnPolicyAlgorithm):
         self.logg(episode_logg)
 
     def logg(self, episode_logg: Dict):
-        """
-        Collect statistics from learning and export it to an internal logger
-        :param episode_logg: Dictionary of <Tag (str): statistic values (List)>
-        """
-        for k, v in episode_logg.items():
-            self.logger.record(k, safe_mean(v))
-
-        # agents metrics
-        self.logger.record("metrics/efficiency", safe_mean([ep_info["efficiency"] for ep_info in self.ep_info_buffer]))
-        self.logger.record("metrics/equality", safe_mean([ep_info["equality"] for ep_info in self.ep_info_buffer]))
-        self.logger.record("metrics/sustainability",
-                           safe_mean([ep_info["sustainability"] for ep_info in self.ep_info_buffer]))
-        self.logger.record("metrics/peace", safe_mean([ep_info["peace"] for ep_info in self.ep_info_buffer]))
-
-        self.logger.record("meta/spawn_prob", safe_mean([ep_info["spawn_prob"] for ep_info in self.ep_info_buffer]))
+        # """
+        # Collect statistics from learning and export it to an internal logger
+        # :param episode_logg: Dictionary of <Tag (str): statistic values (List)>
+        # """
+        # for k, v in episode_logg.items():
+        #     self.logger.record(k, safe_mean(v))
+        #
+        # # agents metrics
+        # self.logger.record("metrics/efficiency", safe_mean([ep_info["efficiency"] for ep_info in self.ep_info_buffer]))
+        # self.logger.record("metrics/equality", safe_mean([ep_info["equality"] for ep_info in self.ep_info_buffer]))
+        # self.logger.record("metrics/sustainability",
+        #                    safe_mean([ep_info["sustainability"] for ep_info in self.ep_info_buffer]))
+        # self.logger.record("metrics/peace", safe_mean([ep_info["peace"] for ep_info in self.ep_info_buffer]))
+        self.logger.record("transitions", self.num_timesteps)
 
     def predict_(self, observation: np.ndarray, n_envs: Optional[np.ndarray] = None, deterministic: bool = False, ) \
             -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
         clipped_actions = [None] * (self.num_agents + 1)
-        for agent_id, agent in (self.agents | self.meta).items():
+        for agent_id, agent in self.agents.items():
             # checks rather current agent is meta or regular
             if (agent_id+1) % (self.num_agents+1):
                 _obs = correct_observation_indexing(observation, self.num_agents + 1, agent_id, 1,

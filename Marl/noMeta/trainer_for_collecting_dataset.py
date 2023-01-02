@@ -209,7 +209,7 @@ class TrainderForCollectingDataset(OnPolicyAlgorithm):
                     actions[agent_id] = np.expand_dims(actions_.cpu().numpy(), -1)
                     values[agent_id] = values_
                     log_probs[agent_id] = log_probs_
-                    clipped_actions[agent_id] = clip_action(actions_, self.action_space)
+                    clipped_actions[agent_id] = clip_action(actions_.cpu().numpy(), self.action_space)
 
             clipped_actions[-1] = np.zeros(self.n_envs).astype(int)-1
             all_clipped_actions = np.vstack(clipped_actions).transpose().reshape(-1)

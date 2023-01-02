@@ -130,7 +130,8 @@ class MetaAgentCnnPolicy(ActorCriticCnnPolicy):
         lr_schedule: Callable[[float], float],
         net_arch: Optional[List[Union[int, Dict[str, List[int]]]]] = None,
         activation_fn: Type[nn.Module] = nn.Tanh,
-        policy_kwargs: Optional[Dict[str, Any]] = None,
+        *args,
+        **kwargs,
     ):
 
         super().__init__(
@@ -139,7 +140,8 @@ class MetaAgentCnnPolicy(ActorCriticCnnPolicy):
             lr_schedule,
             net_arch,
             activation_fn,
-            **policy_kwargs
+            *args,
+            **kwargs,
         )
         # Disable orthogonal initialization
         self.ortho_init = False

@@ -1,7 +1,8 @@
 from typing import Any, Dict, List, Optional, Type, Union, Tuple
 import gym
-from gym.spaces import MultiDiscrete
-from .utils import *
+import sys
+import numpy as np
+from gym.spaces import MultiDiscrete, Discrete, Box
 import torch as th
 from gym.core import ActType, ObsType, RenderFrame
 from stable_baselines3 import PPO
@@ -15,6 +16,8 @@ from stable_baselines3.common.vec_env import VecEnv
 from stable_baselines3.common.utils import configure_logger, safe_mean
 from stable_baselines3.common.policies import (ActorCriticCnnPolicy, ActorCriticPolicy, BasePolicy,
                                                MultiInputActorCriticPolicy)
+sys.path.insert(1, "/home/acaftory/CommonsGame/DanfoaTest")
+from Utils.trainer_utils import clip_action, correct_observation_indexing, correct_indexing, obs_as_tensor, map_dict
 
 
 class DummyGymEnv(gym.Env):
@@ -65,6 +68,8 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             verbose: int = 0,
             seed: Optional[int] = None,
             create_eval_env: bool = False,
+            meta_policy: ActorCriticCnnPolicy = None,
+            model_filename: str = "",
             device: Union[th.device, str] = "auto"):
         super().__init__(
             policy,
@@ -100,20 +105,21 @@ class TrainerWithMeta(OnPolicyAlgorithm):
         self.agents_observation_space = agent_observation_space
         self.k = k
 
-        # self.meta_observation_space = gym.spaces.Box( low=0, high=1, shape=(1, 4), dtype=float)
         self.meta_observation_space = env.observation_space
-        self.meta_action_space = env.action_space
-        # self.meta_action_space = MultiDiscrete([5, 5])
+        self.meta_action_space = gym.spaces.MultiDiscrete([5] * self.num_agents)
 
         self.n_steps = n_steps
         self.tensorboard_log = tensorboard_log
         self.verbose = verbose
         self._logger = None
+        self.meta_rewards = [-1, -.5, 0, .5, 1]
 
         agents_env_fn = lambda: DummyGymEnv(self.agents_observation_space, agent_action_space)
         agents_dummy_env = DummyVecEnv([agents_env_fn] * self.n_envs)
 
-        meta_env_fn = lambda: DummyGymEnv(self.meta_observation_space, self.meta_action_space)
+        dim = (env.observation_space.shape[-1], ) + env.observation_space.shape[:-1]
+        obs_space = gym.spaces.Box(low=0, high=255, shape=dim, dtype=np.uint8)
+        meta_env_fn = lambda: DummyGymEnv(obs_space, self.meta_action_space)
         meta_dummy_env = DummyVecEnv([meta_env_fn] * self.n_envs)
 
         self.agents = {i: PPO(
@@ -133,13 +139,13 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             target_kl=target_kl,
             use_sde=use_sde,
             sde_sample_freq=sde_sample_freq,
-            policy_kwargs=policy_kwargs,
+            policy_kwargs=None,
             verbose=0,
             device=device)
             for i in range(self.num_agents)}
 
-        self.meta = {len(self.agents): PPO(
-            policy=policy,
+        meta_ppo = PPO(
+            policy=meta_policy,
             env=meta_dummy_env,
             learning_rate=learning_rate,
             n_steps=n_steps//self.k,
@@ -157,7 +163,9 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             sde_sample_freq=sde_sample_freq,
             policy_kwargs=policy_kwargs,
             verbose=0,
-            device=device)}
+            device=device)
+        meta_ppo.policy.load_state_dict(th.load(model_filename))
+        self.meta = {len(self.agents): meta_ppo}
 
         self.configure_loggers()
 
@@ -230,6 +238,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
                     else:  # meta agent
                         _obs = correct_observation_indexing(self._last_obs, self.num_agents+1, agent_id, self.n_envs,
                                                             self.meta_observation_space.shape).transpose(0, 1, 2, -1)
+                        break
 
                     observations[agent_id] = _obs
                     obs_tensor = obs_as_tensor(_obs, agent.policy.device)
@@ -240,26 +249,33 @@ class TrainerWithMeta(OnPolicyAlgorithm):
                     values[agent_id] = values_
                     log_probs[agent_id] = log_probs_
                     clipped_actions[agent_id] = clip_action(actions_, self.action_space)
-            if (n_steps % self.k) != 0:
-                clipped_actions[-1] = np.zeros(self.n_envs).astype(int)-1
+
+            clipped_actions[-1] = np.zeros(self.n_envs).astype(int)-1
             all_clipped_actions = np.vstack(clipped_actions).transpose().reshape(-1)
             new_obs, rewards_, dones_, infos_ = env.step(all_clipped_actions)
 
+            # meta-agent reward
+            meta_obs = correct_observation_indexing(new_obs, self.num_agents+1, 2, self.n_envs,
+                                                            self.meta_observation_space.shape).transpose(0, -1, 1, 2)
+            meta_obs = obs_as_tensor(meta_obs, agent.policy.device)
+            rewards_, _, _ = self.meta[self.num_agents].policy.forward(meta_obs)
+            rewards_ = np.array([self.meta_rewards[i] for i in rewards_.cpu().numpy().ravel()])
+
             # reshape rewards/done/info to fit the indexing convention
-            for agent_id, agent in (self.agents | self.meta).items():
-                rewards[agent_id] = correct_indexing(rewards_, self.num_agents+1, agent_id, self.n_envs)
-                dones[agent_id] = correct_indexing(dones_, self.num_agents+1, agent_id, self.n_envs)
-                infos[agent_id] = correct_indexing(infos_, self.num_agents+1, agent_id, self.n_envs)
+            for agent_id, agent in self.agents.items():
+                rewards[agent_id] = correct_indexing(rewards_, self.num_agents, agent_id, self.n_envs)
+                dones[agent_id] = correct_indexing(dones_, self.num_agents, agent_id, self.n_envs)
+                infos[agent_id] = correct_indexing(infos_, self.num_agents, agent_id, self.n_envs)
 
             self.num_timesteps += self.n_envs
             # Give access to local variables
             callback.update_locals(locals())
             if callback.on_step() is False:
                 return False
-            [self._update_info_buffer(infos[agent_id]) for agent_id, agent in (self.agents | self.meta).items()]
+            [self._update_info_buffer(infos[agent_id]) for agent_id, agent in self.agents.items()]
 
             # store transitions in agents buffers
-            for agent_id, agent in (self.agents | self.meta).items():
+            for agent_id, agent in self.agents.items():
                 if agent_id == self.num_agents and (n_steps % self.k) != 0:
                     continue
                 agent.rollout_buffer.add(
@@ -274,7 +290,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             self._last_episode_starts = dones
         # Compute value for the last timestep
         with th.no_grad():
-            for agent_id, agent in (self.agents | self.meta).items():
+            for agent_id, agent in self.agents.items():
                 if (agent_id+1) % (self.num_agents+1) != 0:
                     _obs = correct_observation_indexing(self._last_obs, self.num_agents + 1, agent_id, self.n_envs,
                                                         self.agents_observation_space.shape).transpose(0, -1, 1, 2)
@@ -296,7 +312,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
         Update agents policies using the currently gathered rollout buffer.
        """
         episode_logg = []
-        for agent_id, agent in (self.agents | self.meta).items():
+        for agent_id, agent in self.agents.items():
         # for agent_id, agent in self.agents.items():
             agent.train()
             episode_logg.append(agent._logger.name_to_value)
@@ -319,12 +335,10 @@ class TrainerWithMeta(OnPolicyAlgorithm):
                            safe_mean([ep_info["sustainability"] for ep_info in self.ep_info_buffer]))
         self.logger.record("metrics/peace", safe_mean([ep_info["peace"] for ep_info in self.ep_info_buffer]))
 
-        self.logger.record("meta/spawn_prob", safe_mean([ep_info["spawn_prob"] for ep_info in self.ep_info_buffer]))
-
     def predict_(self, observation: np.ndarray, n_envs: Optional[np.ndarray] = None, deterministic: bool = False, ) \
             -> Tuple[np.ndarray, Optional[Tuple[np.ndarray, ...]]]:
         clipped_actions = [None] * (self.num_agents + 1)
-        for agent_id, agent in (self.agents | self.meta).items():
+        for agent_id, agent in self.agents.items():
             # checks rather current agent is meta or regular
             if (agent_id+1) % (self.num_agents+1):
                 _obs = correct_observation_indexing(observation, self.num_agents + 1, agent_id, 1,
@@ -336,7 +350,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             obs_tensor = obs_as_tensor(_obs, agent.policy.device)
             actions_, _, _ = agent.policy.forward(obs_tensor, deterministic=deterministic)
             clipped_actions[agent_id] = clip_action(actions_, self.action_space)
-
+        clipped_actions[-1] = np.zeros(1).astype(int) - 1
         return np.vstack(clipped_actions).transpose().reshape(-1)
 
     def learn(

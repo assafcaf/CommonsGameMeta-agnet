@@ -27,27 +27,12 @@ SPAWN_PROB = {0: np.array([0, 0.0025, 0.005, 0.025]),
               7: np.array([0, 0.15, 0.25, 0.35]),
               }
 TIMEOUT_TIME = 25
-# META_ACTION = {0: 0,     # no-op
-#                1:0.99,  # decrease spawn prop
-#                2:0.95,  # decrease spawn prop
-#                3:0.9,   # decrease spawn prop
-#                4:1.01,   # increase spawn prop
-#                5:1.05,   # increase spawn prop
-#                6:1.1,    # increase spawn prop
-#                7:-1,     # decrease timeout duration
-#                8:-2,     # decrease timeout duration
-#                9:-5,     # decrease timeout duration
-#                10:1,     # increase timeout duration
-#                11:2,     # increase timeout duration
-#                12:5}     # increase timeout duration
-META_ACTION = {0: 0,     # no-op
-               1: 1,  # decrease spawn prop
-               2: 3,
-               4: 4,
-               5: 5,
-               6: 6,
-               7: 7# increase spawn prop
-}     # increase timeout duration
+META_ACTION = {0: -1, # no-op
+               1: -.5,
+               2: 0,
+               3: .5,
+               4: 1
+               }
 
 OUTCAST_POSITION = -99
 
@@ -145,7 +130,7 @@ class MetaHarvestCommonsEnv(MapEnv):
                 low=0,
                 high=255,
                 shape=self.base_map.shape + (1,),
-                dtype=np.float)}
+                dtype=np.uint8)}
 
         # for when the actions of other agents are part of agents observations space
         if self.return_agent_actions:
@@ -199,7 +184,7 @@ class MetaHarvestCommonsEnv(MapEnv):
 
     def step(self, actions):
         self.t += 1
-        self.meta_action(action=actions["meta"])
+        # self.meta_action(action=actions["meta"])
         actions_ = {key: val for key,val in actions.items() if key != 'meta'}
         nObservations, nRewards, nDone, nInfo = super().step(actions_)
         self.update_social_metrics(nRewards)

@@ -6,7 +6,7 @@ from .commons_agent import HarvestCommonsAgent, HARVEST_DEFAULT_VIEW_SIZE
 from .constants import HARVEST_MAP
 from .map_env import MapEnv, ACTIONS
 from .agent import MetaHarvestAgent
-from Danfoa.envs.utils.utility_funcs import rgb2gray, pad, depad
+from Danfoa.envs.utils.utility_funcs import rgb2gray, pad, depad, safe_mean
 
 from Danfoa.envs.gym.discrete_with_dtype import DiscreteWithDType
 
@@ -359,7 +359,7 @@ class MetaHarvestCommonsEnv(MapEnv):
         return equality
 
     def get_social_metrics(self):
-        metrics = {key: np.mean(value) for key, value in self.metrics.items()}
+        metrics = {key: safe_mean(value) for key, value in self.metrics.items()}
         self.metrics = {"efficiency": [],
                         "equality": [],
                         "sustainability": [],

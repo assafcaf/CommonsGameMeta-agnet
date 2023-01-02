@@ -368,7 +368,7 @@ class MapEnv(MultiAgentEnv):
         if color_map is None:
             color_map = self.color_map
 
-        rgb_arr = np.zeros((map.shape[0], map.shape[1], 3), dtype=int)
+        rgb_arr = np.zeros((map.shape[0], map.shape[1], 3), dtype=np.uint8)
         for row_elem in range(map.shape[0]):
             for col_elem in range(map.shape[1]):
                 rgb_arr[row_elem, col_elem, :] = color_map[map[row_elem, col_elem]]

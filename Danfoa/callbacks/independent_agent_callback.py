@@ -1,9 +1,8 @@
 from stable_baselines3.common.callbacks import BaseCallback
 import numpy as np
-from PIL import Image as im
-import imageio
 import os
 import json
+import cv2
 
 
 class IndependentAgentCallback(BaseCallback):
@@ -54,13 +53,37 @@ class IndependentAgentCallback(BaseCallback):
             for _ in range(1000):
                 actions = self.model.predict_(observations, 1)
                 observations, rewards, dones, infos = play_env.step(actions.astype(np.uint8))
-                frame = render_env.render(mode="RGB")
-                frames.append(
-                    im.fromarray(frame.astype(np.uint8)).resize(size=(720, 480), resample=im.BOX).convert("RGB"))
+                frames.append(render_env.render())
                 score += rewards.sum()
 
-            file_name = self.logger.dir + f"/iteration_{self.iterations_ + 1}_score_{int(score)}.gif"
-            imageio.mimsave(file_name, frames, fps=15)
-
+            file_name = f"/iteration_{self.iterations_ + 1}_score_{int(score)}"
+            self.make_video_from_rgb_imgs(frames, vid_path= self.logger.dir, video_name=file_name)
         self.iterations_ += 1
 
+    @staticmethod
+    def make_video_from_rgb_imgs(rgb_arrs, vid_path, video_name='trajectory',
+                                 fps=15, format="mp4v", resize=(720, 480)):
+        """
+        Create a video from a list of rgb arrays
+        """
+        print("Rendering video...")
+        if vid_path[-1] != '/':
+            vid_path += '/'
+        video_path = vid_path + video_name + '.mp4'
+
+        if resize is not None:
+            width, height = resize
+        else:
+            frame = rgb_arrs[0]
+            height, width, layers = frame.shape
+
+        fourcc = cv2.VideoWriter_fourcc(*format)
+        video = cv2.VideoWriter(video_path, fourcc, float(fps), (width, height))
+
+        for i, image in enumerate(rgb_arrs):
+            if resize is not None:
+                image = cv2.resize(image, resize, interpolation=cv2.INTER_NEAREST)
+            video.write(image)
+
+        video.release()
+        cv2.destroyAllWindows()

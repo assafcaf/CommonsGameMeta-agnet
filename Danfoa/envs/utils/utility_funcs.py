@@ -126,3 +126,10 @@ def pad_matrix(left_pad, right_pad, top_pad, bot_pad, matrix, const_val=1):
     pad_mat = np.pad(matrix, ((left_pad, right_pad), (top_pad, bot_pad)),
                      'constant', constant_values=(const_val, const_val))
     return pad_mat
+
+
+def safe_mean(arr):
+    if len(arr) == 0:
+        return None
+    return np.mean(arr)
+

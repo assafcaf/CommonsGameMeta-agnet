@@ -89,7 +89,7 @@ def parse_args():
     parser.add_argument(
         "--k",
         type=int,
-        default=25,
+        default=10,
         help="Meta agent sampling rate ",
     )
 
@@ -101,6 +101,7 @@ def main(args):
     # Config
     os.environ["CUDA_VISIBLE_DEVICES"] = args.num_gpu
     device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+    root_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), os.pardir)
 
     env_name = args.env_name
     num_agents = args.num_agents
@@ -115,7 +116,7 @@ def main(args):
     num_frames = 8  # number of frames to stack together; use >4 to avoid automatic VecTransposeImage
     features_dim = 128
     ent_coef = 0.01  # entropy coefficient in loss
-    batch_size = 64
+    batch_size = 64 # number of samples per gradient update
     lr = 2.5e-5
     n_epochs = 4
     gae_lambda = .95
@@ -139,20 +140,13 @@ def main(args):
                                        num_cpus=num_cpus,
                                        map_=map
                                        )
-    # load meta agent
-    root_dir = "/home/acaftory/CommonsGame/DanfoaTest"
+    # mera agent params
     model_filename = os.path.join(root_dir, "results/meta_supervised_models", args.model_name,
                                   "meta_agent_policy.pt")
     policy_kwargs = dict(
         features_extractor_class=CustomCnnNetwork,
         features_extractor_kwargs=dict(features_dim=128),
     )
-    # meta_lr = lambda x: 0.0001
-    # meta_observation_space = gym.spaces.Box(low=0, high=255, shape=env.observation_space.shape[::-1], dtype=np.uint8)
-    # policy = MetaAgentCnnPolicy(observation_space=meta_observation_space, action_space=env.action_space,
-    #                             lr_schedule=meta_lr, policy_kwargs=policy_kwargs)
-    # policy.to(device)
-    # policy.load_state_dict(torch.load(model_filename))
 
     # build trainer
     tensorboard_log = f"{root_dir}/results/MetaRewards/{map_name}"

@@ -70,6 +70,8 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             create_eval_env: bool = False,
             meta_policy: ActorCriticCnnPolicy = None,
             model_filename: str = "",
+            alpha: float = 0.95,
+            n_meta_action: int = 5,
             device: Union[th.device, str] = "auto"):
         super().__init__(
             policy,
@@ -104,15 +106,17 @@ class TrainerWithMeta(OnPolicyAlgorithm):
         self.n_envs = env.num_envs // (num_agents + 1)
         self.agents_observation_space = agent_observation_space
         self.k = k
+        self.alpha = alpha
 
         self.meta_observation_space = env.observation_space
-        self.meta_action_space = gym.spaces.MultiDiscrete([5] * self.num_agents)
+        self.meta_action_space = gym.spaces.MultiDiscrete([n_meta_action] * self.num_agents)
+        self.meta_rewards = np.linspace(-1, 1, n_meta_action)
 
         self.n_steps = n_steps
         self.tensorboard_log = tensorboard_log
         self.verbose = verbose
         self._logger = None
-        self.meta_rewards = [-1, -.5, 0, .5, 1]
+
 
         agents_env_fn = lambda: DummyGymEnv(self.agents_observation_space, agent_action_space)
         agents_dummy_env = DummyVecEnv([agents_env_fn] * self.n_envs)
@@ -148,7 +152,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             policy=meta_policy,
             env=meta_dummy_env,
             learning_rate=learning_rate,
-            n_steps=n_steps//self.k,
+            n_steps=n_steps*self.k,
             batch_size=batch_size,
             n_epochs=n_epochs,
             gamma=gamma,

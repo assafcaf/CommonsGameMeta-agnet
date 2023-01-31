@@ -152,7 +152,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             policy=meta_policy,
             env=meta_dummy_env,
             learning_rate=learning_rate,
-            n_steps=n_steps*self.k,
+            n_steps=n_steps,
             batch_size=batch_size,
             n_epochs=n_epochs,
             gamma=gamma,
@@ -220,10 +220,9 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             agent.rollout_buffer.reset()
 
         self._last_episode_starts = list(self._last_episode_starts.reshape(self.num_agents + 1, self.n_envs))
-        observations = None
+        n_steps = 0
         values = None
         dones = None
-        n_steps = 0
         callback.on_rollout_start()
         while n_steps < n_rollout_steps:
             actions, clipped_actions, values, log_probs, rewards, observations, dones, infos = self.get_new_buffers()
@@ -234,16 +233,10 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             # predict actions by the agents
             with th.no_grad():
                 # Convert to pytorch tensor or to TensorDict
-                for agent_id, agent in (self.agents | self.meta).items():
+                for agent_id, agent in self.agents.items():
                     # checks rather current agent is meta or regular
-                    if (agent_id+1) % (self.num_agents+1):   # low-level agent
-                        _obs = correct_observation_indexing(self._last_obs, self.num_agents+1, agent_id, self.n_envs,
-                                                            self.agents_observation_space.shape).transpose(0, -1, 1, 2)
-                    else:  # meta agent
-                        _obs = correct_observation_indexing(self._last_obs, self.num_agents+1, agent_id, self.n_envs,
-                                                            self.meta_observation_space.shape).transpose(0, 1, 2, -1)
-                        break
-
+                    _obs = correct_observation_indexing(self._last_obs, self.num_agents+1, agent_id, self.n_envs,
+                                                        self.agents_observation_space.shape).transpose(0, -1, 1, 2)
                     observations[agent_id] = _obs
                     obs_tensor = obs_as_tensor(_obs, agent.policy.device)
 
@@ -254,24 +247,31 @@ class TrainerWithMeta(OnPolicyAlgorithm):
                     log_probs[agent_id] = log_probs_
                     clipped_actions[agent_id] = clip_action(actions_, self.action_space)
 
+            # tale one step in the environment
             clipped_actions[-1] = np.zeros(self.n_envs).astype(int)-1
             all_clipped_actions = np.vstack(clipped_actions).transpose().reshape(-1)
             new_obs, rewards_, dones_, infos_ = env.step(all_clipped_actions)
 
-            # meta-agent reward
-            meta_obs = correct_observation_indexing(new_obs, self.num_agents+1, 2, self.n_envs,
-                                                            self.meta_observation_space.shape).transpose(0, -1, 1, 2)
-            meta_obs = obs_as_tensor(meta_obs, agent.policy.device)
-            rewards_, _, _ = self.meta[self.num_agents].policy.forward(meta_obs)
-            rewards_ = np.array([self.meta_rewards[i] for i in rewards_.cpu().numpy().ravel()])
+            # meta-agent rewards
+            with th.no_grad():
+                meta_obs = correct_observation_indexing(new_obs, self.num_agents+1, 2, self.n_envs,
+                                                                self.meta_observation_space.shape).transpose(0, -1, 1, 2)
+                meta_obs_t = obs_as_tensor(meta_obs, self.meta[2].policy.device)
+                meta_actions, meta_values, meta_log_prob = self.meta[self.num_agents].policy.forward(meta_obs_t)
+                meta_actions = meta_actions.cpu().numpy()
+                rewards_m = np.array([self.meta_rewards[i] for i in meta_actions.ravel()])
 
             # reshape rewards/done/info to fit the indexing convention
-            for agent_id, agent in self.agents.items():
-                rewards[agent_id] = correct_indexing(rewards_, self.num_agents, agent_id, self.n_envs)
-                dones[agent_id] = correct_indexing(dones_, self.num_agents, agent_id, self.n_envs)
-                infos[agent_id] = correct_indexing(infos_, self.num_agents, agent_id, self.n_envs)
+            for agent_id, agent in (self.agents | self.meta).items():
+                if agent_id < self.num_agents:
+                    rewards[agent_id] = correct_indexing(rewards_m, self.num_agents, agent_id, self.n_envs)
+                    dones[agent_id] = correct_indexing(dones_, self.num_agents, agent_id, self.n_envs)
+                    infos[agent_id] = correct_indexing(infos_, self.num_agents, agent_id, self.n_envs)
+                else:
+                    rewards[agent_id] = correct_indexing(rewards_, self.num_agents, agent_id, self.n_envs)
+                    dones[agent_id] = correct_indexing(dones_, self.num_agents, agent_id, self.n_envs)
+                    infos[agent_id] = correct_indexing(infos_, self.num_agents, agent_id, self.n_envs)
 
-            self.num_timesteps += self.n_envs
             # Give access to local variables
             callback.update_locals(locals())
             if callback.on_step() is False:
@@ -279,29 +279,39 @@ class TrainerWithMeta(OnPolicyAlgorithm):
             [self._update_info_buffer(infos[agent_id]) for agent_id, agent in self.agents.items()]
 
             # store transitions in agents buffers
-            for agent_id, agent in self.agents.items():
-                if agent_id == self.num_agents and (n_steps % self.k) != 0:
-                    continue
-                agent.rollout_buffer.add(
-                    observations[agent_id],
-                    actions[agent_id],
-                    rewards[agent_id],
-                    self._last_episode_starts[agent_id],
-                    values[agent_id],
-                    log_probs[agent_id])
+            for agent_id, agent in (self.agents | self.meta).items():
+                if agent_id == self.num_agents:
+                    agent.rollout_buffer.add(
+                        meta_obs,
+                        meta_actions,
+                        rewards[agent_id],
+                        self._last_episode_starts[agent_id],
+                        meta_values,
+                        meta_log_prob)
+                else:
+                    agent.rollout_buffer.add(
+                        observations[agent_id],
+                        actions[agent_id],
+                        rewards[agent_id],
+                        self._last_episode_starts[agent_id],
+                        values[agent_id],
+                        log_probs[agent_id])
+
+            # end of transition storing
+            self.num_timesteps += self.n_envs
             n_steps += 1
             self._last_obs = new_obs
             self._last_episode_starts = dones
+
         # Compute value for the last timestep
         with th.no_grad():
-            for agent_id, agent in self.agents.items():
-                if (agent_id+1) % (self.num_agents+1) != 0:
+            for agent_id, agent in (self.agents | self.meta).items():
+                if (agent_id+1) % (self.num_agents+1) != 0:  # if not meta-agent
                     _obs = correct_observation_indexing(self._last_obs, self.num_agents + 1, agent_id, self.n_envs,
                                                         self.agents_observation_space.shape).transpose(0, -1, 1, 2)
-                else:
-
+                else:  # meta-agent
                     _obs = correct_observation_indexing(self._last_obs, self.num_agents + 1, agent_id, self.n_envs,
-                                                        self.meta_observation_space.shape).transpose(0, 1, 2, -1)
+                                                        self.meta_observation_space.shape).transpose(0, -1, 1, 2)
                 obs_tensor = obs_as_tensor(_obs, agent.policy.device)
 
                 # Compute value for the last timestep
@@ -316,7 +326,7 @@ class TrainerWithMeta(OnPolicyAlgorithm):
         Update agents policies using the currently gathered rollout buffer.
        """
         episode_logg = []
-        for agent_id, agent in self.agents.items():
+        for agent_id, agent in (self.agents | self.meta).items():
         # for agent_id, agent in self.agents.items():
             agent.train()
             episode_logg.append(agent._logger.name_to_value)

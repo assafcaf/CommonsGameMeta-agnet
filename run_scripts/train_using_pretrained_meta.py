@@ -116,7 +116,7 @@ def main(args):
     num_frames = 8  # number of frames to stack together; use >4 to avoid automatic VecTransposeImage
     features_dim = 128
     ent_coef = 0.01  # entropy coefficient in loss
-    batch_size = 64 # number of samples per gradient update
+    batch_size = (num_envs * rollout_len) // 16  # number of samples per gradient update
     lr = 2.5e-5
     n_epochs = 4
     gae_lambda = .95

@@ -191,7 +191,7 @@ class MetaHarvestCommonsEnv(MapEnv):
         for agent_id, obs in nObservations.items():
             nObservations[agent_id]["curr_obs"] = pad(nObservations[agent_id]["curr_obs"], self.base_map.shape)
         nObservations["meta"] = {"curr_obs": self.meta_observation()}
-        nRewards["meta"] = self.compute_efficiency(0, True) * self.compute_peace(0)
+        nRewards["meta"] = self.compute_efficiency(0, div=True) * self.compute_peace(0)
         nDone["meta"] = False
         nInfo["meta"] = {}
         return nObservations, nRewards, nDone, nInfo

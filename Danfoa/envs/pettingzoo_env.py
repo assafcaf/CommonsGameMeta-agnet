@@ -1,11 +1,12 @@
 from functools import lru_cache
-
+import numpy as np
 from gym.utils import EzPickle
 from pettingzoo.utils import wrappers
 # from pettingzoo.utils.conversions import from_parallel_wrapper
 from pettingzoo.utils.env import ParallelEnv
 
 from Danfoa.envs.env_creator import get_env_creator
+from collections import Counter
 
 MAX_CYCLES = 100
 
@@ -35,11 +36,11 @@ class ssd_parallel_env(ParallelEnv):
         self.observation_spaces = {agent: env.observation_space for agent in self.possible_agents}
         self.action_space = lru_cache(maxsize=None)(lambda agent_id: env.action_space)
         self.action_spaces = {agent: env.action_space for agent in self.possible_agents}
+        self.infos = {agent: {'metrics': {"reward_this_turn": 0, "fire": 0}} for agent in self.possible_agents}
 
     def reset(self, seed=None, return_info=False, options=None):
         self.agents = self.possible_agents[:]
-        self.num_cycles = 0
-        self.dones = {agent: False for agent in self.agents}
+        self.infos = {agent: {'metrics': {"reward_this_turn": 0, "fire": 0}} for agent in self.possible_agents}
         return self.ssd_env.reset()
 
     def seed(self, seed=None):
@@ -52,17 +53,19 @@ class ssd_parallel_env(ParallelEnv):
         self.ssd_env.close()
 
     def step(self, actions):
-        obss, rews, self.dones, infos = self.ssd_env.step(actions)
-        del self.dones["__all__"]
-        self.num_cycles += 1
-        if self.num_cycles >= self.max_cycles:
-            self.dones = {agent: True for agent in self.agents}
+        observations, rewards, dones, infos = self.ssd_env.step(actions)
+        # update internal infos
+        for agent in list(infos.keys())[:-1]:
+            self.infos[agent]["metrics"] = {key: self.infos[agent]["metrics"][key] + infos[agent][key]
+                                            for key in self.infos[agent]["metrics"]}
+
+        # end of episode
+        if np.any(list(dones.values())):
             self.ssd_env.compute_social_metrics()
-            metrics = self.ssd_env.get_social_metrics()
-            for agent_id, info in infos.items():
-                info["metrics"] = metrics
-        self.agents = [agent for agent in self.agents if not self.dones[agent]]
-        return obss, rews, self.dones, infos
+            infos = self.infos
+            infos["meta"]["metrics"] = self.ssd_env.get_social_metrics()
+        self.agents = [agent for agent in self.agents if not dones[agent]]
+        return observations, rewards, dones, infos
 
 
 class _parallel_env(ssd_parallel_env, EzPickle):

@@ -19,8 +19,7 @@ def correct_observation_indexing(array, num_agents, agent_id, num_envs, shape):
 
 
 def correct_indexing(array, num_agents, agent_id, num_envs):
-    return np.array([array[envid * num_agents + agent_id]
-                    for envid in range(num_envs)])
+    return np.array([array[envid * num_agents + agent_id] for envid in range(num_envs)])
 
 
 def rescale(a, final_shape):

@@ -156,3 +156,10 @@ class MetaAgentCnnPolicy(ActorCriticCnnPolicy):
         action_logits = self.action_net(latent_pi)
         return th.split(action_logits, tuple(self.action_dims), dim=1)
 
+    def get_actions(self, features: th.Tensor, agent_id: int, rewards: th.Tensor) -> th.Tensor:
+        """
+        :return: (th.Tensor, th.Tensor) latent_policy, latent_value of the specified network.
+            If all layers are shared, then ``latent_policy == latent_value``
+        """
+        probs = th.softmax(self.predict_logits(features)[agent_id], dim=1)
+        return th.matmul(probs, rewards)

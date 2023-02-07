@@ -243,16 +243,16 @@ class MapEnv(MultiAgentEnv):
         rewards = {}
         dones = {}
         infos = {}
-        for agent in self.agents.values():
-            infos[agent.agent_id] = {}
+        for agent_id, agent in self.agents.items():
+            infos[agent.agent_id] = {"reward_this_turn": agent.reward_this_turn,
+                                     "fire": self.agents[agent_id].action_map(actions[agent_id]) == "FIRE"}
             agent.grid = map_with_agents
             rgb_arr = self.map_to_colors(agent.get_state(), self.color_map)
             rgb_arr = self.rotate_view(agent.orientation, rgb_arr)
             observations[agent.agent_id] = {"curr_obs": rgb2gray(rgb_arr)}
             rewards[agent.agent_id] = agent.compute_reward()
-            dones[agent.agent_id] = agent.get_done()
+            dones[agent.agent_id] = self.t >= self.ep_length
             # dones[agent.agent_id] = False
-        dones["__all__"] = np.any(list(dones.values()))
         return observations, rewards, dones, infos
 
     def reset(self):

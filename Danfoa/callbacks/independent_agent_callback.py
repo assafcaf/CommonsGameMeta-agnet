@@ -1,4 +1,5 @@
 from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.utils import obs_as_tensor
 import numpy as np
 import os
 import json
@@ -32,7 +33,6 @@ class IndependentAgentCallback(BaseCallback):
                   "n_frames": self.model.env.observation_space.shape[-1],
                   "policy_type": str(type(self.model.agents[0].policy.features_extractor)).split(".")[-1],
                   "observations_space": str(self.model.observation_space),
-                  "k": self.model.k,
                   "actions": str(self.eval_env.venv.venv.vec_envs[0].par_env.env.aec_env.env.env.env.ssd_env.spawn_prob)
                   }
 
@@ -51,8 +51,13 @@ class IndependentAgentCallback(BaseCallback):
             frames = []
             score = 0
             for _ in range(1000):
-                actions = self.model.predict_(observations, 1)
-                observations, rewards, dones, infos = play_env.step(actions.astype(np.uint8))
+                actions, clipped_actions, values, log_probs, rewards, rewards_t, observations_, dones, infos = self.model.get_new_buffers()
+                actions = []
+                self.model.predict_low_level(observations, actions, values, log_probs, clipped_actions, observations_,
+                                  self.model.num_agents, 1, self.model.agents_observation_space)
+                clipped_actions.append(np.zeros(1, dtype=np.int64))
+                all_clipped_actions = np.vstack(clipped_actions).transpose().reshape(-1)
+                observations, rewards, dones, infos = play_env.step(all_clipped_actions)
                 frames.append(render_env.render())
                 score += rewards.sum()
 

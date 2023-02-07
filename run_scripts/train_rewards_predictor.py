@@ -10,7 +10,7 @@ from stable_baselines3 import PPO
 sys.path.insert(1, "/home/acaftory/CommonsGame/DanfoaTest")
 from Utils.environment import config_environment
 from Danfoa.maps import HARVEST_MAP, MEDIUM_MAP
-from Marl.withMeta.trainer import TrainerWithMeta
+from Marl.withMeta.rewards_predictor import TrainerRewardsPredictor
 from Danfoa.envs.gym.spaces import observation_space, action_space
 from Danfoa.callbacks.independent_agent_callback import IndependentAgentCallback
 from Utils.policies import MetaAgentAnnPolicy, MetaAgentCnnPolicy, CustomCnnNetwork
@@ -26,7 +26,7 @@ def parse_args():
         help="The SSD environment to use",
     )
     parser.add_argument("--debug",
-                        default=True,
+                        default=False,
                         action="store_true",
                         help="Debug mode")
     parser.add_argument(
@@ -115,12 +115,12 @@ def main(args):
     k = args.k
 
     # Training
-    num_cpus = 4  # number of cpus
-    num_envs = 4 if not args.debug else 1  # number of parallel multi-agent environments
+    num_cpus = 10  # number of cpus
+    num_envs = 10  # number of parallel multi-agent environments
     num_frames = 8  # number of frames to stack together; use >4 to avoid automatic VecTransposeImage
     features_dim = 128
     ent_coef = 0.01  # entropy coefficient in loss
-    batch_size = 64 # number of samples per gradient update
+    batch_size = 100 # number of samples per gradient update
     lr = 2.5e-5
     n_epochs = 4
     gae_lambda = .95
@@ -153,8 +153,8 @@ def main(args):
     )
 
     # build trainer
-    tensorboard_log = f"{root_dir}/results/MetaRewards/{map_name}"
-    model = TrainerWithMeta(
+    tensorboard_log = f"{root_dir}/results/RewardPredictor/{map_name}"
+    model = TrainerRewardsPredictor(
         "MlpPolicy",
         agent_observation_space=agent_observation_space,
         agent_action_space=agent_action_space,
@@ -173,8 +173,7 @@ def main(args):
         policy_kwargs=policy_kwargs,
         model_filename=model_filename,
         tensorboard_log=tensorboard_log if not args.debug else None,
-        verbose=3,
-        k=args.k)
+        verbose=3)
 
     # train model
     custom_callback = IndependentAgentCallback(eval_env=eval_env, freq=log_every)

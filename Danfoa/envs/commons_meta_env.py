@@ -114,10 +114,11 @@ class MetaHarvestCommonsEnv(MapEnv):
         self.timeout_record = {}
         self.k = k
         self.t = 0
-        self.metrics = {"efficiency": [],
+        self.metrics = {"r": [],
                         "equality": [],
                         "sustainability": [],
-                        "peace": []}
+                        "peace": [],
+                        "l": []}
 
     @property
     def action_space(self):
@@ -183,7 +184,6 @@ class MetaHarvestCommonsEnv(MapEnv):
         return observations
 
     def step(self, actions):
-        self.t += 1
         # self.meta_action(action=actions["meta"])
         actions_ = {key: val for key,val in actions.items() if key != 'meta'}
         nObservations, nRewards, nDone, nInfo = super().step(actions_)
@@ -192,7 +192,7 @@ class MetaHarvestCommonsEnv(MapEnv):
             nObservations[agent_id]["curr_obs"] = pad(nObservations[agent_id]["curr_obs"], self.base_map.shape)
         nObservations["meta"] = {"curr_obs": self.meta_observation()}
         nRewards["meta"] = self.compute_efficiency(0, True) * self.compute_peace(0)
-        nDone["meta"] = False
+        nDone["meta"] = np.any(list(nDone.values()))
         nInfo["meta"] = {}
         return nObservations, nRewards, nDone, nInfo
 
@@ -308,10 +308,11 @@ class MetaHarvestCommonsEnv(MapEnv):
         sustainability = self.compute_sustainability()
         peace = self.compute_peace(0)
 
-        self.metrics["efficiency"].append(efficiency)
+        self.metrics["r"].append(efficiency)
         self.metrics["equality"].append(equality)
         self.metrics["sustainability"].append(sustainability)
         self.metrics["peace"].append(peace)
+        self.metrics["l"].append(self.ep_length)
         self.metrics |= self.meta_history
         self.timeout_record = {}
         self.rewards_record = {}
@@ -360,9 +361,10 @@ class MetaHarvestCommonsEnv(MapEnv):
 
     def get_social_metrics(self):
         metrics = {key: safe_mean(value) for key, value in self.metrics.items()}
-        self.metrics = {"efficiency": [],
+        self.metrics = {"r": [],
                         "equality": [],
                         "sustainability": [],
-                        "peace": []}
+                        "peace": [],
+                        "l": []}
         return metrics
 
